@@ -7,13 +7,16 @@
   "paths": {},
   "components": {
     "schemas": {
-      "AnswerType": {
+      "FooBaseType": {
         "required": [
           "$type"
         ],
         "type": "object",
         "properties": {
           "$type": {
+            "type": "string"
+          },
+          "baseProperty" : {
             "type": "string"
           }
         },
@@ -22,61 +25,37 @@
         "discriminator": {
           "propertyName": "$type",
           "mapping": {
-            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+Comment, Avius.Analysis.Api": "#/components/schemas/Comment",
-            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+Informational, Avius.Analysis.Api": "#/components/schemas/Informational",
-            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+NominalChoice, Avius.Analysis.Api": "#/components/schemas/NominalChoice",
-            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+OrdinalChoice, Avius.Analysis.Api": "#/components/schemas/OrdinalChoice"
+            "DriviedClassName1, Assembly": "#/components/schemas/DriviedClassName1",
+            "DriviedClassName2, Assembly": "#/components/schemas/DriviedClassName2"
           }
         }
       },
-      "Comment": {
+      "DriviedClassName1": {
         "type": "object",
         "allOf": [
           {
-            "$ref": "#/components/schemas/AnswerType"
+            "$ref": "#/components/schemas/FooBaseType"
           }
         ],
         "additionalProperties": false,
-        "description": ""
+        "description": "No Additional Properties"
       },
-      "Informational": {
+      "DriviedClassName2": {
         "type": "object",
         "allOf": [
           {
-            "$ref": "#/components/schemas/AnswerType"
+            "$ref": "#/components/schemas/FooBaseType"
           }
         ],
         "properties": {
-          "answerFormat": {
+          "additionalProperty": {
             "type": "integer",
             "format": "int32"
           }
         },
         "additionalProperties": false,
-        "description": ""
-      },
-      "NominalChoice": {
-        "type": "object",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/AnswerType"
-          }
-        ],
-        "additionalProperties": false,
-        "description": ""
-      },
-      "OrdinalChoice": {
-        "type": "object",
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/AnswerType"
-          }
-        ],
-        "additionalProperties": false,
-        "description": ""
+        "description": "With Additional Property"
       }
-
-      
     }
   }
 }

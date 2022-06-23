@@ -4,7 +4,7 @@ import $RefParser, { HTTPResolverOptions } from '@apidevtools/json-schema-ref-pa
 import mkdirp from 'mkdirp';
 import path from 'path';
 import { parseOptions } from './cmd-args';
-import { HTTP_METHODS, methodName, simpleName, syncDirs, deleteDirRecursive } from './gen-utils';
+import { HTTP_METHODS, methodName, resolveRef, simpleName, syncDirs, deleteDirRecursive } from './gen-utils';
 import { Globals } from './globals';
 import { HandlebarsManager } from './handlebars-manager';
 import { Import } from './imports';
@@ -149,6 +149,45 @@ export class NgOpenApiGen {
 
   private readModels() {
     const schemas = (this.openApi.components || {}).schemas || {};
+
+    // PreProcess Schema
+    for (const name of Object.keys(schemas)) {
+      let schema = schemas[name];
+      if (schema.$ref) {
+        // A reference
+        schema = resolveRef(this.openApi, schema.$ref);
+      }
+      const { discriminator, properties } = (schema as SchemaObject);
+     
+      if (discriminator && properties)
+      {
+        // Remove the property from the base object
+        delete properties[discriminator.propertyName]
+      }
+      if (discriminator) {
+        const mapping = discriminator.mapping || {};
+        
+        for (const key of Object.keys(mapping)) {
+          // Value is a ref
+          const value = mapping[key];
+          const target = resolveRef(this.openApi, value) as SchemaObject;
+
+          if (target) {
+            target.properties = target.properties || {};
+            target.required = target.required || [];
+            target.required.push(discriminator.propertyName)
+            target.properties[discriminator.propertyName] = {
+              type: "'"+ key +"'"
+            }
+          }
+
+        }
+
+      }
+
+      
+    }
+
     for (const name of Object.keys(schemas)) {
       const schema = schemas[name];
       const model = new Model(this.openApi, name, schema, this.options);
