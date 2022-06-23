@@ -2,5 +2,6 @@
   "$schema": "../ng-openapi-gen-schema.json",
   "input": "inherit.json",
   "output": "out/inherit",
-  "ignoreUnusedModels": false
+  "ignoreUnusedModels": false,
+  "constDiscriminator": true
 }

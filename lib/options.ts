@@ -90,4 +90,7 @@ export interface Options {
       toUse: 'arraybuffer' | 'blob' | 'json' | 'document'
     }
   };
+
+  /**  */
+  constDiscriminator?: boolean;
 }

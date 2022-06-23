@@ -150,42 +150,45 @@ export class NgOpenApiGen {
   private readModels() {
     const schemas = (this.openApi.components || {}).schemas || {};
 
-    // PreProcess Schema
-    for (const name of Object.keys(schemas)) {
-      let schema = schemas[name];
-      if (schema.$ref) {
-        // A reference
-        schema = resolveRef(this.openApi, schema.$ref);
-      }
-      const { discriminator, properties } = (schema as SchemaObject);
-     
-      if (discriminator && properties)
-      {
-        // Remove the property from the base object
-        delete properties[discriminator.propertyName]
-      }
-      if (discriminator) {
-        const mapping = discriminator.mapping || {};
+    if (this.options.constDiscriminator)
+    {
+        // PreProcess Schema
+        for (const name of Object.keys(schemas)) {
+          let schema = schemas[name];
+          if (schema.$ref) {
+            // A reference
+            schema = resolveRef(this.openApi, schema.$ref);
+          }
+          const { discriminator, properties } = (schema as SchemaObject);
         
-        for (const key of Object.keys(mapping)) {
-          // Value is a ref
-          const value = mapping[key];
-          const target = resolveRef(this.openApi, value) as SchemaObject;
+          if (discriminator && properties)
+          {
+            // Remove the property from the base object
+            delete properties[discriminator.propertyName]
+          }
+          if (discriminator) {
+            const mapping = discriminator.mapping || {};
+            
+            for (const key of Object.keys(mapping)) {
+              // Value is a ref
+              const value = mapping[key];
+              const target = resolveRef(this.openApi, value) as SchemaObject;
 
-          if (target) {
-            target.properties = target.properties || {};
-            target.required = target.required || [];
-            target.required.push(discriminator.propertyName)
-            target.properties[discriminator.propertyName] = {
-              type: "'"+ key +"'"
+              if (target) {
+                target.properties = target.properties || {};
+                target.required = target.required || [];
+                target.required.push(discriminator.propertyName)
+                target.properties[discriminator.propertyName] = {
+                  type: "'"+ key +"'"
+                }
+              }
+
             }
+
           }
 
+          
         }
-
-      }
-
-      
     }
 
     for (const name of Object.keys(schemas)) {
