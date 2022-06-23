@@ -1,10 +1,10 @@
-import jsesc from 'jsesc';
 import fs from 'fs-extra';
-import path from 'path';
-import { camelCase, deburr, kebabCase, upperCase, upperFirst } from 'lodash';
+import jsesc from 'jsesc';
+import { camelCase, deburr, find, forEach, kebabCase, upperCase, upperFirst } from 'lodash';
 import { OpenAPIObject, ReferenceObject, SchemaObject } from 'openapi3-ts';
-import { Options } from './options';
+import path from 'path';
 import { Model } from './model';
+import { Options } from './options';
 
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
 type SchemaOrRef = SchemaObject | ReferenceObject;
@@ -202,6 +202,33 @@ export function tsType(schemaOrRef: SchemaOrRef | undefined, options: Options, o
   let intersectionType: string[] = [];
   if (allOf.length > 0) {
     intersectionType = allOf.map(u => tsType(u, options, openApi, container));
+    forEach(allOf, x => {
+      if (x.$ref) {
+        const resolved2 = resolveRef(openApi, x.$ref);
+        if (resolved2 !== null) {
+          const discriminator = ((resolved2 as SchemaObject).discriminator);
+          if (discriminator)
+          {
+            var dmap = discriminator.mapping || {};
+
+            var values = Object.keys(dmap);
+            var target = find(values, xx => dmap[xx]==='#/components/schemas/'+container?.name);
+            if (target)
+            {
+            schema.properties = schema.properties || {};
+            schema.required = schema.required || [];
+            schema.required.push(discriminator.propertyName);
+            schema.properties[discriminator.propertyName] = {
+              "type": "'"+target+"'",
+             
+            }}
+         }
+
+        }
+         
+      }
+    })
+
   }
 
   // An object

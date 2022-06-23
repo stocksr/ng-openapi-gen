@@ -1,0 +1,82 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Blah",
+    "version": "1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "AnswerType": {
+        "required": [
+          "$type"
+        ],
+        "type": "object",
+        "properties": {
+          "$type": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "description": "",
+        "discriminator": {
+          "propertyName": "$type",
+          "mapping": {
+            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+Comment, Avius.Analysis.Api": "#/components/schemas/Comment",
+            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+Informational, Avius.Analysis.Api": "#/components/schemas/Informational",
+            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+NominalChoice, Avius.Analysis.Api": "#/components/schemas/NominalChoice",
+            "Avius.Analysis.Api.DTO.QuestionDataset+AnswerType+OrdinalChoice, Avius.Analysis.Api": "#/components/schemas/OrdinalChoice"
+          }
+        }
+      },
+      "Comment": {
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AnswerType"
+          }
+        ],
+        "additionalProperties": false,
+        "description": ""
+      },
+      "Informational": {
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AnswerType"
+          }
+        ],
+        "properties": {
+          "answerFormat": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "description": ""
+      },
+      "NominalChoice": {
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AnswerType"
+          }
+        ],
+        "additionalProperties": false,
+        "description": ""
+      },
+      "OrdinalChoice": {
+        "type": "object",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AnswerType"
+          }
+        ],
+        "additionalProperties": false,
+        "description": ""
+      }
+
+      
+    }
+  }
+}

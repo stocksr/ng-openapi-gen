@@ -1,4 +1,4 @@
-import { SchemaObject, OpenAPIObject } from 'openapi3-ts';
+import { OpenAPIObject, SchemaObject } from 'openapi3-ts';
 import { EnumValue } from './enum-value';
 import { GenType } from './gen-type';
 import { tsComments, tsType, unqualifiedName } from './gen-utils';
@@ -48,6 +48,7 @@ export class Model extends GenType {
     }
 
     const hasAllOf = schema.allOf && schema.allOf.length > 0;
+
     this.isObject = (type === 'object' || !!schema.properties) && !schema.nullable && !hasAllOf;
     this.isEnum = (this.enumValues || []).length > 0;
     this.isSimple = !this.isObject && !this.isEnum;
@@ -59,9 +60,10 @@ export class Model extends GenType {
       const sortedNames = [...propertiesByName.keys()];
       sortedNames.sort();
       this.properties = sortedNames.map(propName => propertiesByName.get(propName) as Property);
+      
     } else {
       // Simple / array / enum / union / intersection
-      this.simpleType = tsType(schema, options, openApi);
+      this.simpleType = tsType(schema, options, openApi,this);
     }
     this.collectImports(schema);
     this.updateImports();
@@ -89,7 +91,13 @@ export class Model extends GenType {
       // An object definition
       const properties = schema.properties || {};
       const required = schema.required || [];
-      const propNames = Object.keys(properties);
+      let propNames = Object.keys(properties);
+   
+      if (schema.discriminator) {
+        // Remove the property from the base type
+        propNames = propNames.filter(x => x !== schema.discriminator?.propertyName);
+      }
+
       // When there are additional properties, we need an union of all types for it.
       // See https://github.com/cyclosproject/ng-openapi-gen/issues/68
       const propTypes = new Set<string>();
