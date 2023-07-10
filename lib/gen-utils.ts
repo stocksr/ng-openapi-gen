@@ -210,9 +210,12 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
     const properties = schema.properties || {};
     const required = schema.required;
 
+    const discriminatorProp = schema.discriminator?.propertyName;
+
     for (const baseSchema of allOf) {
       const discriminator = tryGetDiscriminator(baseSchema, schema, openApi);
-      if (discriminator) {
+      if (discriminator && !discriminatorProp) {
+        // Note deep nesting can mean that a type is both (parent and child - this const discriminator is only wanted at the very bottom level)
         result += `'${discriminator.propName}': '${discriminator.value}';\n`;
       }
     }
@@ -220,6 +223,9 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
     for (const propName of Object.keys(properties)) {
       const property = properties[propName];
       if (!property) {
+        continue;
+      }
+      if (propName === discriminatorProp){
         continue;
       }
       if ((property as SchemaObject).description) {

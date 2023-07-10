@@ -95,6 +95,9 @@ export class Model extends GenType {
       // An object definition
       const properties = schema.properties || {};
       const required = schema.required || [];
+      const discriminatorProp = schema.discriminator?.propertyName;
+
+
       const propNames = Object.keys(properties);
       // When there are additional properties, we need an union of all types for it.
       // See https://github.com/cyclosproject/ng-openapi-gen/issues/68
@@ -108,6 +111,9 @@ export class Model extends GenType {
         }
       };
       for (const propName of propNames) {
+        if (propName === discriminatorProp) {
+          continue;
+        }
         const prop = new Property(this, propName, properties[propName], required.includes(propName), this.options, this.openApi);
         propertiesByName.set(propName, prop);
         appendType(prop.type);
