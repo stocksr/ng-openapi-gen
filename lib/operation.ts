@@ -1,8 +1,21 @@
 import { last, upperFirst } from 'lodash';
-import { ContentObject, MediaTypeObject, OpenAPIObject, OperationObject, ParameterObject, PathItemObject, ReferenceObject, RequestBodyObject, ResponseObject, SecurityRequirementObject, SecuritySchemeObject } from 'openapi3-ts';
 import { Content } from './content';
 import { resolveRef, typeName } from './gen-utils';
 import { Logger } from './logger';
+import {
+  OpenAPIObject,
+  OperationObject,
+  ParameterObject,
+  PathItemObject,
+  ReferenceObject,
+  RequestBodyObject,
+  ResponseObject,
+  SecurityRequirementObject,
+  SecuritySchemeObject,
+  MediaTypeObject,
+  ContentObject,
+  isReferenceObject
+} from './openapi-typings';
 import { OperationVariant } from './operation-variant';
 import { Options } from './options';
 import { Parameter } from './parameter';
@@ -43,7 +56,7 @@ export class Operation {
     this.path = this.path.replace(/\'/g, '\\\'');
     this.tags = spec.tags || [];
     this.pathVar = `${upperFirst(id)}Path`;
-    this.methodName = spec['x-operation-name'] || this.id;
+    this.methodName = (spec as any)['x-operation-name'] || this.id;
 
     // Add both the common and specific parameters
     const allParams = [
@@ -70,7 +83,7 @@ export class Operation {
 
     let body = spec.requestBody;
     if (body) {
-      if (body.$ref) {
+      if (isReferenceObject(body)) {
         body = resolveRef(this.openApi, body.$ref);
       }
       body = body as RequestBodyObject;
@@ -99,7 +112,7 @@ export class Operation {
     const result: Parameter[] = [];
     if (params) {
       for (let param of params) {
-        if (param.$ref) {
+        if (isReferenceObject(param)) {
           param = resolveRef(this.openApi, param.$ref);
         }
         param = param as ParameterObject;
@@ -125,7 +138,7 @@ export class Operation {
       return Object.keys(param).map(key => {
         const scope = param[key];
         const security: SecuritySchemeObject = resolveRef(this.openApi, `#/components/securitySchemes/${key}`);
-        return new Security(key, security, scope, this.options, this.openApi);
+        return new Security(key, security, scope);
       });
     });
   }
@@ -165,9 +178,9 @@ export class Operation {
     return { success: successResponse, all: allResponses };
   }
 
-  private getResponse(responseObject: ResponseObject, statusCode: string): Response {
+  private getResponse(responseObject: ResponseObject | ReferenceObject, statusCode: string): Response {
     let responseDesc = undefined;
-    if (responseObject.$ref) {
+    if (isReferenceObject(responseObject)) {
       responseDesc = resolveRef(this.openApi, responseObject.$ref);
     } else {
       responseDesc = responseObject as ResponseObject;
@@ -201,7 +214,13 @@ export class Operation {
       if (content && content.length > 0) {
         for (const type of content) {
           if (type && type.mediaType) {
-            map.set(this.variantMethodPart(type), type);
+            const part = this.variantMethodPart(type);
+
+            if (map.has(part)) {
+              this.logger.warn(`Overwriting variant method part '${part}' for media type '${map.get(part)?.mediaType}' by media type '${type.mediaType}'.`);
+            }
+
+            map.set(part, type);
           }
         }
       }
@@ -221,6 +240,57 @@ export class Operation {
     // For example: application/json, application/foo-bar+json, text/json ...
     const requestVariants = this.contentsByMethodPart(this.requestBody);
     const responseVariants = this.contentsByMethodPart(this.successResponse);
+
+    // Calculate total number of variants - if there's only one combination, no suffixes needed
+    const totalVariants = Math.max(1, requestVariants.size) * Math.max(1, responseVariants.size);
+
+    // Check if we have a potential ambiguity: both request and response have single content types
+    // that would result in the same method suffix, causing duplicate method names
+    const hasAmbiguity = totalVariants > 1 &&
+      requestVariants.size === 1 && responseVariants.size === 1 &&
+      [...requestVariants.keys()][0] === '' && [...responseVariants.keys()][0] === '' &&
+      [...requestVariants.values()][0] !== null && [...responseVariants.values()][0] !== null;
+
+    if (hasAmbiguity) {
+      // Additional check: are the media types actually the same?
+      const requestMediaType = [...requestVariants.values()][0]?.mediaType;
+      const responseMediaType = [...responseVariants.values()][0]?.mediaType;
+
+      if (requestMediaType && responseMediaType) {
+        // Calculate what the method parts would be for each
+        const requestPart = this.variantMethodPart([...requestVariants.values()][0]!);
+        const responsePart = this.variantMethodPart([...responseVariants.values()][0]!);
+
+        // Only recalculate with preserved suffixes if the method parts would be the same
+        if (requestPart === responsePart) {
+          requestVariants.clear();
+          responseVariants.clear();
+
+          if (this.requestBody?.content && this.requestBody.content.length > 0) {
+            for (const content of this.requestBody.content) {
+              if (content && content.mediaType) {
+                const part = this.variantMethodPart(content);
+                requestVariants.set(part, content);
+              }
+            }
+          } else {
+            requestVariants.set('', null);
+          }
+
+          if (this.successResponse?.content && this.successResponse.content.length > 0) {
+            for (const content of this.successResponse.content) {
+              if (content && content.mediaType) {
+                const part = this.variantMethodPart(content);
+                responseVariants.set(part, content);
+              }
+            }
+          } else {
+            responseVariants.set('', null);
+          }
+        }
+      }
+    }
+
     requestVariants.forEach((requestContent, requestPart) => {
       responseVariants.forEach((responseContent, responsePart) => {
         const methodName = this.methodName + requestPart + responsePart;
@@ -234,19 +304,50 @@ export class Operation {
    */
   private variantMethodPart(content: Content | null): string {
     if (content) {
-      let type = content.mediaType.replace(/\/\*/, '');
+      const keep = this.keepFullResponseMediaType(content.mediaType);
+      let type = content.mediaType;
+      type = content.mediaType.replace(/\/\*/, '');
       if (type === '*' || type === 'application/octet-stream') {
         return '$Any';
       }
-      type = last(type.split('/')) as string;
-      const plus = type.lastIndexOf('+');
-      if (plus >= 0) {
-        type = type.substring(plus + 1);
+
+      if (keep !== 'full') {
+        type = last(type.split('/')) as string;
+
+        if (keep !== 'tail') {
+          const plus = type.lastIndexOf('+');
+          if (plus >= 0) {
+            type = type.substring(plus + 1);
+          }
+        }
       }
+
       return this.options.skipJsonSuffix && type === 'json' ? '' : `$${typeName(type)}`;
     } else {
       return '';
     }
   }
 
+  /**
+   * Returns hint, how the expected response type in the request method names should be abbreviated.
+   */
+  private keepFullResponseMediaType(mediaType: string) {
+    if (this.options.keepFullResponseMediaType === true) {
+      return 'full';
+    }
+
+    if (Array.isArray(this.options.keepFullResponseMediaType)) {
+      for (const check of this.options.keepFullResponseMediaType) {
+        if (check.mediaType === undefined || new RegExp(check.mediaType).test(mediaType)) {
+          return check.use ?? 'short';
+        }
+      }
+    }
+
+    return 'short';
+  }
+
+  get tag() {
+    return this.tags[0] || this.options.defaultTag || 'operations';
+  }
 }

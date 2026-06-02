@@ -29,6 +29,9 @@ export interface Options {
   /** Typescript file, without '.ts' extension that exports all models. Set to false to skip. Defaults to `models`. */
   modelIndex?: string | boolean;
 
+  /** Typescript file, without '.ts' extension that exports all functions. Set to false to skip. Defaults to `functions`. */
+  functionIndex?: string | boolean;
+
   /** Typescript file, without '.ts' extension that exports all services. Set to false to skip. Defaults to `services`. */
   serviceIndex?: string | boolean;
 
@@ -37,6 +40,9 @@ export interface Options {
 
   /** When false, no services will be generated (clients will use functions directly) */
   services?: boolean;
+
+  /** When true, generates Promise-based service methods. When false, Observable-based. */
+  promises?: boolean;
 
   /** Prefix for generated service classes. Defaults to empty. */
   servicePrefix?: string;
@@ -59,8 +65,8 @@ export interface Options {
   /** Name for the base service class to generate. Defaults to 'BaseService'. */
   baseService?: string;
 
-  /** Name for the service to call functions directly. Defaults to 'ApiService'. */
-  apiService?: string;
+  /** Name for the service to call functions directly. Defaults to 'Api'. */
+  apiService?: string | boolean;
 
   /** Name for the request builder class to generate. Defaults to 'RequestBuilder'. */
   requestBuilder?: string;
@@ -79,7 +85,7 @@ export interface Options {
    * - `pascal` for enum PascalCase names;
    * - `ignorecase` for enum names that ignore character casing;
    *
-   * Defaults to 'pascal'.
+   * Defaults to 'alias'.
    */
   enumStyle?: 'alias' | 'upper' | 'pascal' | 'ignorecase';
 
@@ -120,4 +126,22 @@ export interface Options {
 
   /** When true, no verbose output will be displayed */
   silent?: boolean;
+
+  /** When true (default) models names will be camelized, besides having the first letter capitalized. Setting to false will prevent camelizing. */
+  camelizeModelNames?: boolean;
+
+  /** List of paths to early exclude from the processing */
+  excludePaths?: string[];
+
+  /**
+   * When true, the expected response type in the request method names are not abbreviated and all response variants are kept.
+   * Default is false.
+   * When array is given, `mediaType` is expected to be a RegExp string matching the response media type. The first match in the array
+   * will decide whether or how to shorten the media type. If no mediaType is given, it will always match.
+   *
+   * 'short':     application/x-spring-data-compact+json    ->    getEntities$Json
+   * 'tail':      application/x-spring-data-compact+json    ->    getEntities$XSpringDataCompactJson
+   * 'full':      application/x-spring-data-compact+json    ->    getEntities$ApplicationXSpringDataCompactJson
+   */
+  keepFullResponseMediaType?: boolean | Array<{ mediaType?: string; use: 'full' | 'tail' | 'short' }>;
 }

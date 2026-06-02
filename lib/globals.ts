@@ -20,25 +20,34 @@ export class Globals {
   moduleClass?: string;
   moduleFile?: string;
   modelIndexFile?: string;
+  functionIndexFile?: string;
   serviceIndexFile?: string;
   rootUrl?: string;
+  promises: boolean;
+  generateServices: boolean;
 
   constructor(options: Options) {
-    this.configurationClass = options.configuration || 'ApiConfiguration';
+    this.configurationClass = options.configuration ?? 'ApiConfiguration';
     this.configurationFile = fileName(this.configurationClass);
     this.configurationParams = `${this.configurationClass}Params`;
-    this.baseServiceClass = options.baseService || 'BaseService';
+    this.baseServiceClass = options.baseService ?? 'BaseService';
     this.baseServiceFile = fileName(this.baseServiceClass);
-    this.apiServiceClass = options.apiService || '';
-    if (this.apiServiceClass === '') {
+    if (options.apiService === false) {
       this.apiServiceClass = undefined;
     } else {
-      // Angular's best practices demands xxx.service.ts, not xxx-service.ts
-      this.apiServiceFile = fileName(this.apiServiceClass).replace(/\-service$/, '.service');
+      this.apiServiceClass = options.apiService === true ? '' : options.apiService;
+      if ((this.apiServiceClass ?? '') === '') {
+        this.apiServiceClass = 'Api';
+      }
+      if (typeof this.apiServiceClass === 'string') {
+        // Angular's best practices demands xxx.service.ts, not xxx-service.ts
+        this.apiServiceFile = fileName(this.apiServiceClass).replace(/\-service$/, '.service');
+      }
     }
-    this.requestBuilderClass = options.requestBuilder || 'RequestBuilder';
+    this.promises = options.promises ?? true;
+    this.requestBuilderClass = options.requestBuilder ?? 'RequestBuilder';
     this.requestBuilderFile = fileName(this.requestBuilderClass);
-    this.responseClass = options.response || 'StrictHttpResponse';
+    this.responseClass = options.response ?? 'StrictHttpResponse';
     this.responseFile = fileName(this.responseClass);
     if (options.module !== false && options.module !== '') {
       this.moduleClass = options.module === true || options.module === undefined ? 'ApiModule' : options.module;
@@ -51,6 +60,9 @@ export class Globals {
     if (options.modelIndex !== false && options.modelIndex !== '') {
       this.modelIndexFile = options.modelIndex === true || options.modelIndex === undefined ? 'models' : options.modelIndex;
     }
+    if (options.functionIndex !== false && options.functionIndex !== '') {
+      this.functionIndexFile = options.functionIndex === true || options.functionIndex === undefined ? 'functions' : options.functionIndex;
+    }
+    this.generateServices = !!options.services;
   }
-
 }

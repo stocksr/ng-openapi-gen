@@ -408,6 +408,66 @@
         }
       }
     },
+    "/path8": {
+      "get": {
+        "tags": [
+          "tag.tag2.tag3.tag4.tag5"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/hal+json": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/x-spring-data-compact+json": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/uri-list": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tag.tag2.tag3.tag4.tag5"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/duplicated1": {
       "get": {
         "operationId": "duplicated",
@@ -423,6 +483,84 @@
         "summary": "Test a duplicated operationId",
         "responses": {
           "200": {}
+        }
+      }
+    },
+    "/single-success-variant": {
+      "get": {
+        "operationId": "singleSuccessVariant",
+        "summary": "Test single success variant with different error response",
+        "description": "This operation has text/plain for both request and success response, but JSON for error (500), should not get content type suffix",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success response with text/plain",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response with JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-success-variant": {
+      "get": {
+        "operationId": "multiSuccessVariant",
+        "summary": "Test multiple success variants with error response",
+        "description": "This operation has both JSON and XML for success (200/201) and JSON for error (500), should get content type suffixes",
+        "responses": {
+          "200": {
+            "description": "Success response with JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created response with XML",
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response with JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     }

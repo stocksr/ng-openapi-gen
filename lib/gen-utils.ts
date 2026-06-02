@@ -1,11 +1,19 @@
 import fs from 'fs-extra';
 import jsesc from 'jsesc';
 import { camelCase, deburr, kebabCase, upperCase, upperFirst } from 'lodash';
-import { OpenAPIObject, ReferenceObject, SchemaObject } from 'openapi3-ts';
 import path from 'path';
 import { Logger } from './logger';
 import { Model } from './model';
 import { Options } from './options';
+import {
+  OpenAPIObject,
+  ReferenceObject,
+  SchemaObject,
+  isReferenceObject,
+  isArraySchemaObject,
+  isNullable,
+  getSchemaType
+} from './openapi-typings';
 
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
 type SchemaOrRef = SchemaObject | ReferenceObject;
@@ -71,8 +79,12 @@ export function ensureNotReserved(name: string): string {
 /**
  * Returns the type (class) name for a given regular name
  */
-export function typeName(name: string): string {
-  return upperFirst(methodName(name));
+export function typeName(name: string, options?: Options): string {
+  if (options?.camelizeModelNames === false) {
+    return upperFirst(toBasicChars(name, true));
+  } else {
+    return upperFirst(methodName(name));
+  }
 }
 
 /**
@@ -145,14 +157,14 @@ export function tsComments(description: string | undefined, level: number, depre
  * Applies the prefix and suffix to a model class name
  */
 export function modelClass(baseName: string, options: Options) {
-  return `${options.modelPrefix || ''}${typeName(baseName)}${options.modelSuffix || ''}`;
+  return `${options.modelPrefix || ''}${typeName(baseName, options)}${options.modelSuffix || ''}`;
 }
 
 /**
  * Applies the prefix and suffix to a service class name
  */
 export function serviceClass(baseName: string, options: Options) {
-  return `${options.servicePrefix || ''}${typeName(baseName)}${options.serviceSuffix || 'Service'}`;
+  return `${options.servicePrefix || ''}${typeName(baseName, options)}${options.serviceSuffix || 'Service'}`;
 }
 
 /**
@@ -188,11 +200,67 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
     }
   }
 
-  const type = schema.type || 'any';
+  const type = getSchemaType(schema);
+
+  // Handle OpenAPI 3.1 union types (type array)
+  if (Array.isArray(type)) {
+    const nonNullTypes = type.filter(t => t !== 'null');
+    const hasNull = type.includes('null');
+
+    if (nonNullTypes.length > 1) {
+      // Generate union of the different types
+      const unionTypes = nonNullTypes.map(t => {
+        // Create a schema object with single type for recursive processing
+        const singleTypeSchema = { ...schema, type: t as any };
+        return rawTsType(singleTypeSchema, options, openApi, container);
+      }).filter(t => t !== null);
+
+      // Remove duplicates
+      const uniqueTypes = [...new Set(unionTypes)];
+
+      if (uniqueTypes.length === 1) {
+        return hasNull ? `(${uniqueTypes[0]} | null)` : uniqueTypes[0];
+      }
+
+      const unionType = uniqueTypes.join(' | ');
+      return hasNull ? `(${unionType} | null)` : `(${unionType})`;
+    } else if (nonNullTypes.length === 1) {
+      // Single non-null type, process normally
+      const singleType = nonNullTypes[0];
+      const singleTypeSchema = { ...schema, type: singleType as any };
+      const result = rawTsType(singleTypeSchema, options, openApi, container);
+      return hasNull ? `(${result} | null)` : result;
+    } else if (hasNull) {
+      // Only null type
+      return 'null';
+    }
+    // Fallback to any if no valid types
+    return 'any';
+  }
 
   // An array
-  if (type === 'array' || schema.items) {
-    const items = schema.items || {};
+  if (type === 'array' || isArraySchemaObject(schema)) {
+    // Check for OpenAPI 3.1 prefixItems (tuple types)
+    if ('prefixItems' in schema && Array.isArray((schema as any).prefixItems)) {
+      const prefixItems = (schema as any).prefixItems;
+      const tupleTypes = prefixItems.map((item: any) => tsType(item, options, openApi, container));
+
+      // Check if additional items are allowed
+      const additionalItems = (schema as any).items;
+      if (additionalItems === false || additionalItems === undefined) {
+        // Exact tuple - no additional items
+        return `[${tupleTypes.join(', ')}]`;
+      } else if (additionalItems) {
+        // Tuple with additional items of specific type
+        const additionalType = tsType(additionalItems, options, openApi, container);
+        return `[${tupleTypes.join(', ')}, ...${additionalType}[]]`;
+      } else {
+        // Tuple with any additional items
+        return `[${tupleTypes.join(', ')}, ...any[]]`;
+      }
+    }
+
+    const items = isArraySchemaObject(schema) && 'items' in schema ? schema.items : {};
     const itemsType = tsType(items, options, openApi, container);
     return `Array<${itemsType}>`;
   }
@@ -213,10 +281,12 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
     const discriminatorProp = schema.discriminator?.propertyName;
 
     for (const baseSchema of allOf) {
-      const discriminator = tryGetDiscriminator(baseSchema, schema, openApi);
-      if (discriminator && !discriminatorProp) {
-        // Note deep nesting can mean that a type is both (parent and child - this const discriminator is only wanted at the very bottom level)
-        result += `'${discriminator.propName}': '${discriminator.value}';\n`;
+      const discriminators = findAllDiscriminators(baseSchema, schema, openApi);
+      for (const discriminator of discriminators) {
+        if (!discriminatorProp) {
+          // Note deep nesting can mean that a type is both (parent and child - this const discriminator is only wanted at the very bottom level)
+          result += `'${discriminator.propName}': '${discriminator.value}';\n`;
+        }
       }
     }
 
@@ -252,7 +322,7 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
   }
 
   // Inline enum
-  const enumValues = schema.enum || [];
+  const enumValues = schema.enum || ((schema as any).const ? [(schema as any).const] : []);
   if (enumValues.length > 0) {
     if (type === 'number' || type === 'integer' || type === 'boolean') {
       return enumValues.join(' | ');
@@ -267,7 +337,13 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
   }
 
   // A simple type (integer doesn't exist as type in JS, use number instead)
-  return type === 'integer' ? 'number' : type;
+  if (type) {
+    const finalType = type === 'integer' ? 'number' : type;
+    return finalType;
+  }
+
+  // If no type is specified, default to 'any'
+  return 'any';
 }
 
 /**
@@ -279,18 +355,35 @@ export function tsType(schemaOrRef: SchemaOrRef | undefined, options: Options, o
     return 'any';
   }
 
-  if (schemaOrRef.$ref) {
+  if (isReferenceObject(schemaOrRef)) {
     // A reference
     const resolved = resolveRef(openApi, schemaOrRef.$ref) as SchemaObject;
     const name = simpleName(schemaOrRef.$ref);
     // When referencing the same container, use its type name
-    return maybeAppendNull((container && container.name === name) ? container.typeName : qualifiedName(name, options), !!resolved.nullable);
+    if (container && container.name === name) {
+      return maybeAppendNull(container.typeName, isNullable(resolved));
+    }
+    // Check if the container has an import alias for this reference
+    if (container && typeof (container as any).getImportTypeName === 'function') {
+      const aliasedTypeName = (container as any).getImportTypeName(name);
+      return maybeAppendNull(aliasedTypeName, isNullable(resolved));
+    }
+    // Fallback to qualified name
+    return maybeAppendNull(qualifiedName(name, options), isNullable(resolved));
   }
 
   // Resolve the actual type (maybe nullable)
   const schema = schemaOrRef as SchemaObject;
   const type = rawTsType(schema, options, openApi, container);
-  return maybeAppendNull(type, !!schema.nullable);
+  const result = maybeAppendNull(type, isNullable(schema));
+
+  // Support branded/nominal types via x-flavor extension
+  const flavor = (schema as any)['x-flavor'];
+  if (flavor) {
+    return `${result} & { $flavor?:'${flavor}'}`;
+  }
+
+  return result;
 }
 
 /**
@@ -371,10 +464,45 @@ export function syncDirs(srcDir: string, destDir: string, removeStale: boolean, 
 }
 
 /**
+ * Recursively finds all discriminators from a base schema and its inheritance chain for a derived schema.
+ */
+function findAllDiscriminators(baseSchemaOrRef: SchemaObject | ReferenceObject, derivedSchema: SchemaObject, openApi: OpenAPIObject): Array<{propName: string, value: string}> {
+  const discriminators: Array<{propName: string, value: string}> = [];
+  const visited = new Set<string>();
+
+  function collectDiscriminators(currentSchemaOrRef: SchemaObject | ReferenceObject) {
+    const currentSchema = (isReferenceObject(currentSchemaOrRef) ? resolveRef(openApi, currentSchemaOrRef.$ref) : currentSchemaOrRef) as SchemaObject;
+
+    // Avoid infinite recursion
+    const schemaKey = isReferenceObject(currentSchemaOrRef) ? currentSchemaOrRef.$ref : JSON.stringify(currentSchema);
+    if (visited.has(schemaKey)) {
+      return;
+    }
+    visited.add(schemaKey);
+
+    // Check if current schema has a discriminator
+    const discriminator = tryGetDiscriminator(currentSchemaOrRef, derivedSchema, openApi);
+    if (discriminator) {
+      discriminators.push(discriminator);
+    }
+
+    // Recursively check allOf schemas
+    if (currentSchema.allOf) {
+      for (const allOfSchema of currentSchema.allOf) {
+        collectDiscriminators(allOfSchema);
+      }
+    }
+  }
+
+  collectDiscriminators(baseSchemaOrRef);
+  return discriminators;
+}
+
+/**
  * Tries to get a discriminator info from a base schema and for a derived one.
  */
 function tryGetDiscriminator(baseSchemaOrRef: SchemaObject | ReferenceObject, derivedSchema: SchemaObject, openApi: OpenAPIObject) {
-  const baseSchema = (baseSchemaOrRef.$ref ? resolveRef(openApi, baseSchemaOrRef.$ref) : baseSchemaOrRef) as SchemaObject;
+  const baseSchema = (isReferenceObject(baseSchemaOrRef) ? resolveRef(openApi, baseSchemaOrRef.$ref) : baseSchemaOrRef) as SchemaObject;
   const discriminatorProp = baseSchema.discriminator?.propertyName;
   if (discriminatorProp) {
     const discriminatorValue = tryGetDiscriminatorValue(baseSchema, derivedSchema, openApi);

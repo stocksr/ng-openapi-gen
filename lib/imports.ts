@@ -11,6 +11,7 @@ export class Import implements Importable {
   file: string;
   useAlias: boolean;
   fullPath: string;
+  typeOnly: boolean;
 
   // Fields from Importable
   importName: string;
@@ -19,11 +20,12 @@ export class Import implements Importable {
   importTypeName?: string;
   importQualifiedName?: string;
 
-  constructor(name: string, typeName: string, qName: string, path: string, file: string) {
+  constructor(name: string, typeName: string, qName: string, path: string, file: string, typeOnly: boolean) {
     this.name = name;
     this.typeName = typeName;
     this.qualifiedName = qName;
     this.useAlias = this.typeName !== this.qualifiedName;
+    this.typeOnly = typeOnly;
     this.path = path;
     this.file = file;
     this.fullPath = `${this.path.split('/').filter(p => p.length).join('/')}/${this.file.split('/').filter(p => p.length).join('/')}`;
@@ -42,27 +44,52 @@ export class Import implements Importable {
 export class Imports {
   private _imports = new Map<string, Import>();
 
-  constructor(private options: Options) {
+  constructor(private options: Options, private currentTypeName?: string) {
   }
 
   /**
    * Adds an import
    */
-  add(param: string | Importable) {
+  add(param: string | Importable, typeOnly: boolean) {
     let imp: Import;
     if (typeof param === 'string') {
       // A model
-      imp = new Import(param, unqualifiedName(param, this.options), qualifiedName(param, this.options), 'models/', modelFile(param, this.options));
+      const importTypeName = unqualifiedName(param, this.options);
+      let importQualifiedName = qualifiedName(param, this.options);
+
+      // Check for collision with current type name
+      if (this.currentTypeName && importTypeName === this.currentTypeName) {
+        // Add suffix to avoid collision
+        let suffix = 1;
+        let aliasedTypeName = `${importTypeName}_${suffix}`;
+        while (this.hasImportWithTypeName(aliasedTypeName)) {
+          suffix++;
+          aliasedTypeName = `${importTypeName}_${suffix}`;
+        }
+        // Keep the original typeName for import, use alias for qualifiedName
+        importQualifiedName = aliasedTypeName;
+      }
+
+      imp = new Import(param, importTypeName, importQualifiedName, 'models/', modelFile(param, this.options), typeOnly);
     } else {
       // An Importable
-      imp = new Import(param.importName, param.importTypeName ?? param.importName, param.importQualifiedName ?? param.importName, `${param.importPath}`, param.importFile);
+      imp = new Import(param.importName, param.importTypeName ?? param.importName, param.importQualifiedName ?? param.importName, `${param.importPath}`, param.importFile, typeOnly);
     }
     this._imports.set(imp.name, imp);
   }
 
+  private hasImportWithTypeName(typeName: string): boolean {
+    for (const imp of this._imports.values()) {
+      if (imp.qualifiedName === typeName) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   toArray(): Import[] {
     const array = [...this._imports.values()];
-    array.sort((a, b) => a.importName.localeCompare(b.importName));
+    array.sort((a, b) => a.importName.localeCompare(b.importName, 'en'));
     return array;
   }
 

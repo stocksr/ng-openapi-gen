@@ -13,8 +13,8 @@ function createParser() {
     // eslint-disable-next-line @typescript-eslint/naming-convention
     add_help: true,
     description: `
-Generator for API clients described with OpenAPI 3.0 specification for
-Angular 6+ projects. Requires a configuration file, which defaults to
+Generator for API clients described with OpenAPI 3.0 / 3.1 specification for
+Angular 16+ projects. Requires a configuration file, which defaults to
 ${DEFAULT} in the current directory. The file can also be
 specified using '--config <file>' or '-c <file>'.
 All settings in the configuration file can be overriding by setting the
@@ -124,7 +124,7 @@ function objectifyCustomizedResponseType(args: { customizedResponseType?: string
 
   try {
     args.customizedResponseType = JSON.parse(args.customizedResponseType);
-  } catch (error) {
+  } catch {
     throw new Error(`Invalid JSON string: [${args.customizedResponseType}] \n for --customizedResponseType`);
   }
 }

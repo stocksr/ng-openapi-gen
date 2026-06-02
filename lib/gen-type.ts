@@ -1,7 +1,7 @@
-import { ReferenceObject, SchemaObject } from 'openapi3-ts';
 import { fileName, namespace, simpleName, typeName } from './gen-utils';
 import { Importable } from './importable';
 import { Import, Imports } from './imports';
+import { ReferenceObject, SchemaObject, isReferenceObject, isArraySchemaObject } from './openapi-typings';
 import { Options } from './options';
 
 /**
@@ -43,14 +43,14 @@ export abstract class GenType {
     this.qualifiedName = this.typeName;
     if (this.namespace) {
       this.fileName = this.namespace + '/' + this.fileName;
-      this.qualifiedName = typeName(this.namespace) + this.typeName;
+      this.qualifiedName = typeName(this.namespace, options) + this.typeName;
     }
-    this._imports = new Imports(options);
+    this._imports = new Imports(options, this.typeName);
   }
 
-  protected addImport(param: string | Importable | null | undefined) {
+  protected addImport(param: string | Importable | null | undefined, typeOnly?: boolean) {
     if (param && !this.skipImport(param)) {
-      this._imports.add(param);
+      this._imports.add(param, !!typeOnly);
     }
   }
 
@@ -70,7 +70,7 @@ export abstract class GenType {
   protected collectImports(schema: SchemaObject | ReferenceObject | undefined, additional = false, processOneOf = false): void {
     if (!schema) {
       return;
-    } else if (schema.$ref) {
+    } else if (isReferenceObject(schema)) {
       const dep = simpleName(schema.$ref);
       if (additional) {
         this._additionalDependencies.add(dep);
@@ -85,7 +85,7 @@ export abstract class GenType {
       if (processOneOf) {
         (schema.oneOf || []).forEach(i => this.collectImports(i, additional));
       }
-      if (schema.items) {
+      if (isArraySchemaObject(schema) && 'items' in schema) {
         this.collectImports(schema.items, additional);
       }
       if (schema.properties) {
