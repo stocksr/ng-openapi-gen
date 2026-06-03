@@ -31,11 +31,9 @@ describe('OpenAPI 3.1 Webhooks Tests', () => {
         expect(nameProp).toBeDefined();
         expect(nameProp?.type).toContain('string');
 
-        // Check userType property - should be enum
+        // userType is the discriminator property with mapping - should be omitted from base interface
         const userTypeProp = decl.properties.find(p => p.name === 'userType');
-        expect(userTypeProp).toBeDefined();
-        expect(userTypeProp?.type).toContain('regular');
-        expect(userTypeProp?.type).toContain('admin');
+        expect(userTypeProp).toBeUndefined();
       });
     }
   });

@@ -131,9 +131,18 @@ export class Model extends GenType {
       // An object definition
       const properties = schema.properties || {};
       const required = schema.required || [];
+
+      // Skip the discriminator property when the schema defines derived type mappings -
+      // the property will be emitted as a const literal in derived types instead
+      const schemaDiscriminator = (schema as any).discriminator || (this.schema as any).discriminator;
+      const discriminatorProp = schemaDiscriminator?.mapping ? schemaDiscriminator.propertyName : undefined;
+
       const propNames = Object.keys(properties);
 
       for (const propName of propNames) {
+        if (propName === discriminatorProp) {
+          continue;
+        }
         const prop = new Property(this, propName, properties[propName], required.includes(propName), this.options, this.openApi);
         propertiesByName.set(propName, prop);
       }
@@ -177,7 +186,6 @@ export class Model extends GenType {
           propTypes.add(type);
         }
       };
-
       for (const prop of this.properties) {
         appendType(prop.type);
         if (!prop.required) {

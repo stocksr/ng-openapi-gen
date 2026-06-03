@@ -47,11 +47,9 @@ describe('Generation of derived classes using polymorphic.json (as is generated 
       expect(ast.declarations[0]).toEqual(expect.any(InterfaceDeclaration));
       const decl = ast.declarations[0] as InterfaceDeclaration;
       expect(decl.name).toBe('DiscBase');
-      expect(decl.properties).toHaveLength(2);
-      expect(decl.properties[0].name).toBe('$type');
+      expect(decl.properties).toHaveLength(1);
+      expect(decl.properties[0].name).toBe('description');
       expect(decl.properties[0].type).toBe('string');
-      expect(decl.properties[1].name).toBe('description');
-      expect(decl.properties[1].type).toBe('string');
 
     });
   });

@@ -278,16 +278,26 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
     const properties = schema.properties || {};
     const required = schema.required;
 
+    const discriminatorProp = schema.discriminator?.propertyName || container?.schema?.discriminator?.propertyName;
+
+    const emittedDiscriminators = new Set<string>();
     for (const baseSchema of allOf) {
       const discriminators = findAllDiscriminators(baseSchema, schema, openApi);
       for (const discriminator of discriminators) {
-        result += `'${discriminator.propName}': '${discriminator.value}';\n`;
+        if (!discriminatorProp && !emittedDiscriminators.has(discriminator.propName)) {
+          emittedDiscriminators.add(discriminator.propName);
+          // Note deep nesting can mean that a type is both (parent and child - this const discriminator is only wanted at the very bottom level)
+          result += `'${discriminator.propName}': '${discriminator.value}';\n`;
+        }
       }
     }
 
     for (const propName of Object.keys(properties)) {
       const property = properties[propName];
       if (!property) {
+        continue;
+      }
+      if (propName === discriminatorProp || emittedDiscriminators.has(propName)){
         continue;
       }
       if ((property as SchemaObject).description) {
@@ -367,7 +377,15 @@ export function tsType(schemaOrRef: SchemaOrRef | undefined, options: Options, o
   // Resolve the actual type (maybe nullable)
   const schema = schemaOrRef as SchemaObject;
   const type = rawTsType(schema, options, openApi, container);
-  return maybeAppendNull(type, isNullable(schema));
+  const result = maybeAppendNull(type, isNullable(schema));
+
+  // Support branded/nominal types via x-flavor extension
+  const flavor = (schema as any)['x-flavor'];
+  if (flavor) {
+    return `${result} & { $flavor?:'${flavor}'}`;
+  }
+
+  return result;
 }
 
 /**
