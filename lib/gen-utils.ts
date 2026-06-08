@@ -367,7 +367,15 @@ export function tsType(schemaOrRef: SchemaOrRef | undefined, options: Options, o
   // Resolve the actual type (maybe nullable)
   const schema = schemaOrRef as SchemaObject;
   const type = rawTsType(schema, options, openApi, container);
-  return maybeAppendNull(type, isNullable(schema));
+  const result = maybeAppendNull(type, isNullable(schema));
+  
+  // Support branded/nominal types via x-flavor extension
+  const flavor = (schema as any)['x-flavor'];
+  if (flavor) {
+    return `${result} & { $flavor?:'${flavor}'}`;
+  }
+
+  return result;
 }
 
 /**
