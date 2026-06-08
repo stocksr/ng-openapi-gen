@@ -132,8 +132,13 @@ export class Model extends GenType {
       const properties = schema.properties || {};
       const required = schema.required || [];
       const propNames = Object.keys(properties);
+      const discriminatorProp = schema.discriminator?.propertyName;
 
       for (const propName of propNames) {
+        if (propName === discriminatorProp) {
+          // Skip discriminator property as it is handled separately
+          continue;
+        }
         const prop = new Property(this, propName, properties[propName], required.includes(propName), this.options, this.openApi);
         propertiesByName.set(propName, prop);
       }

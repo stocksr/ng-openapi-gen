@@ -277,17 +277,41 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
     let result = '{\n';
     const properties = schema.properties || {};
     const required = schema.required;
+    const discriminatorProp = schema.discriminator?.propertyName;
 
     for (const baseSchema of allOf) {
       const discriminators = findAllDiscriminators(baseSchema, schema, openApi);
-      for (const discriminator of discriminators) {
-        result += `'${discriminator.propName}': '${discriminator.value}';\n`;
+      if (discriminators.length > 0 && !discriminatorProp) {
+        // Note deep nesting can mean that a type is both (parent and child - this discriminator is only wanted at the very bottom level)
+        // Hence the check for discriminatorProp - only include discriminators if there's no discriminator in the current schema
+
+        const mergedDiscriminators: Record<string, string> = {};
+
+
+        for (const discriminator of discriminators) {
+          const quotedValue = `'${discriminator.value}'`;
+          if (!mergedDiscriminators[discriminator.propName]) {
+            mergedDiscriminators[discriminator.propName] = quotedValue;
+          } else if (mergedDiscriminators[discriminator.propName] !== quotedValue) {
+            mergedDiscriminators[discriminator.propName] = mergedDiscriminators[discriminator.propName] + ` | ${quotedValue}`;
+          }
+        }
+        for (const propName in mergedDiscriminators) {
+          if (mergedDiscriminators.hasOwnProperty(propName)) {
+            const value = mergedDiscriminators[propName];
+            result += `'${propName}': ${value};\n`;
+          }
+        }
       }
     }
 
     for (const propName of Object.keys(properties)) {
       const property = properties[propName];
       if (!property) {
+        continue;
+      }
+      if (propName === discriminatorProp) {
+        // Skip discriminator property as it is handled separately
         continue;
       }
       if ((property as SchemaObject).description) {
@@ -368,7 +392,7 @@ export function tsType(schemaOrRef: SchemaOrRef | undefined, options: Options, o
   const schema = schemaOrRef as SchemaObject;
   const type = rawTsType(schema, options, openApi, container);
   const result = maybeAppendNull(type, isNullable(schema));
-  
+
   // Support branded/nominal types via x-flavor extension
   const flavor = (schema as any)['x-flavor'];
   if (flavor) {
