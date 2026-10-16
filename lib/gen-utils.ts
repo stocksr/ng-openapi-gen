@@ -192,26 +192,39 @@ function maybeAppendNull(type: string, nullable: boolean) {
 function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObject, container?: Model): string {
   // An union of types
   const union = schema.oneOf || schema.anyOf || [];
+  let unionType: string | undefined;
   if (union.length > 0) {
-    if (union.length > 1) {
-      return `(${union.map(u => tsType(u, options, openApi, container)).join(' | ')})`;
-    } else {
-      return union.map(u => tsType(u, options, openApi, container)).join(' | ');
+    unionType = union.length > 1
+      ? `(${union.map(u => tsType(u, options, openApi, container)).join(' | ')})`
+      : union.map(u => tsType(u, options, openApi, container)).join(' | ');
+    // Keywords declared as siblings of oneOf/anyOf (properties, allOf,
+    // additionalProperties) apply in addition to the union, so they are
+    // rendered as an intersection with it instead of being dropped. When
+    // there are no siblings, the union alone is the resulting type.
+    // See https://github.com/cyclosproject/ng-openapi-gen/issues/401
+    if (!hasUnionSiblings(schema)) {
+      return unionType;
     }
   }
 
   const type = getSchemaType(schema);
 
   // Handle OpenAPI 3.1 union types (type array)
-  if (Array.isArray(type)) {
+  if (unionType === undefined && Array.isArray(type)) {
     const nonNullTypes = type.filter(t => t !== 'null');
     const hasNull = type.includes('null');
+
+    // When the type itself allows null, a null entry in the enum values is
+    // rendered by this union, so it is removed from the enum before rendering
+    // each non-null type, avoiding a duplicated or nested null.
+    // See https://github.com/cyclosproject/ng-openapi-gen/issues/409
+    const nonNullEnum = hasNull && Array.isArray(schema.enum) ? schema.enum.filter(v => v !== null) : schema.enum;
 
     if (nonNullTypes.length > 1) {
       // Generate union of the different types
       const unionTypes = nonNullTypes.map(t => {
         // Create a schema object with single type for recursive processing
-        const singleTypeSchema = { ...schema, type: t as any };
+        const singleTypeSchema = { ...schema, type: t as any, enum: nonNullEnum };
         return rawTsType(singleTypeSchema, options, openApi, container);
       }).filter(t => t !== null);
 
@@ -222,12 +235,12 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
         return hasNull ? `(${uniqueTypes[0]} | null)` : uniqueTypes[0];
       }
 
-      const unionType = uniqueTypes.join(' | ');
-      return hasNull ? `(${unionType} | null)` : `(${unionType})`;
+      const joinedTypes = uniqueTypes.join(' | ');
+      return hasNull ? `(${joinedTypes} | null)` : `(${joinedTypes})`;
     } else if (nonNullTypes.length === 1) {
       // Single non-null type, process normally
       const singleType = nonNullTypes[0];
-      const singleTypeSchema = { ...schema, type: singleType as any };
+      const singleTypeSchema = { ...schema, type: singleType as any, enum: nonNullEnum };
       const result = rawTsType(singleTypeSchema, options, openApi, container);
       return hasNull ? `(${result} | null)` : result;
     } else if (hasNull) {
@@ -239,7 +252,7 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
   }
 
   // An array
-  if (type === 'array' || isArraySchemaObject(schema)) {
+  if (unionType === undefined && (type === 'array' || isArraySchemaObject(schema))) {
     // Check for OpenAPI 3.1 prefixItems (tuple types)
     if ('prefixItems' in schema && Array.isArray((schema as any).prefixItems)) {
       const prefixItems = (schema as any).prefixItems;
@@ -267,9 +280,21 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
 
   // All the types
   const allOf = schema.allOf || [];
-  let intersectionType: string[] = [];
+  const intersectionType: string[] = unionType ? [unionType] : [];
   if (allOf.length > 0) {
-    intersectionType = allOf.map(u => tsType(u, options, openApi, container));
+    const parentRequired = schema.required || [];
+    intersectionType.push(...allOf.map(subSchema => {
+      // A property required by the enclosing schema may be declared inside an
+      // inline allOf member, either directly or within that member's own nested
+      // allOf. Propagate the enclosing schema's required names into inline
+      // members so those properties are not generated as optional. Names the
+      // member doesn't declare are ignored by the per-property loop below and
+      // flow further down through nested allOf. See issue #395.
+      if (parentRequired.length > 0 && !isReferenceObject(subSchema) && (subSchema.properties || subSchema.allOf)) {
+        subSchema = { ...subSchema, required: [...new Set([...(subSchema.required || []), ...parentRequired])] };
+      }
+      return tsType(subSchema, options, openApi, container);
+    }));
   }
 
   // An object
@@ -341,9 +366,11 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
   const enumValues = schema.enum || ((schema as any).const ? [(schema as any).const] : []);
   if (enumValues.length > 0) {
     if (type === 'number' || type === 'integer' || type === 'boolean') {
-      return enumValues.join(' | ');
+      return enumValues.filter(v => v !== null).join(' | ');
     } else {
-      return enumValues.map(v => `'${jsesc(v)}'`).join(' | ');
+      // A null value in an enum is rendered as the `null` type, not as the string 'null'.
+      // See https://github.com/cyclosproject/ng-openapi-gen/issues/409
+      return enumValues.map(v => v === null ? 'null' : `'${jsesc(v)}'`).join(' | ');
     }
   }
 
@@ -353,7 +380,7 @@ function rawTsType(schema: SchemaObject, options: Options, openApi: OpenAPIObjec
   }
 
   // A simple type (integer doesn't exist as type in JS, use number instead)
-  if (type) {
+  if (type && !Array.isArray(type)) {
     const finalType = type === 'integer' ? 'number' : type;
     return finalType;
   }
@@ -471,7 +498,14 @@ export function syncDirs(srcDir: string, destDir: string, removeStale: boolean, 
     for (const file of destFiles) {
       const srcFile = path.join(srcDir, file);
       const destFile = path.join(destDir, file);
-      if (!fs.existsSync(srcFile) && fs.lstatSync(destFile).isFile()) {
+      if (fs.existsSync(srcFile)) {
+        continue;
+      }
+      const stat = fs.lstatSync(destFile);
+      if (stat.isDirectory()) {
+        deleteDirRecursive(destFile);
+        logger.debug('Removed stale directory ' + destFile);
+      } else if (stat.isFile()) {
         fs.unlinkSync(destFile);
         logger.debug('Removed stale file ' + destFile);
       }
@@ -530,6 +564,17 @@ function tryGetDiscriminator(baseSchemaOrRef: SchemaObject | ReferenceObject, de
     }
   }
   return undefined;
+}
+
+/**
+ * Whether the given schema declares keywords (properties, allOf,
+ * additionalProperties) as siblings of a oneOf / anyOf union. Such siblings
+ * apply in addition to the union.
+ */
+export function hasUnionSiblings(schema: SchemaObject): boolean {
+  return !!(schema.allOf && schema.allOf.length > 0)
+    || !!(schema.properties && Object.keys(schema.properties).length > 0)
+    || !!schema.additionalProperties;
 }
 
 /**

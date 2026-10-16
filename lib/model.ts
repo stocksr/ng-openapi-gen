@@ -1,8 +1,8 @@
 import { upperCase } from 'lodash';
 import { EnumValue } from './enum-value';
 import { GenType } from './gen-type';
-import { fileName, tsComments, tsType, unqualifiedName, resolveRef, qualifiedName } from './gen-utils';
-import { OpenAPIObject, SchemaObject, getSchemaType, isNullable, isReferenceObject } from './openapi-typings';
+import { fileName, tsComments, tsType, unqualifiedName, resolveRef, qualifiedName, hasUnionSiblings } from './gen-utils';
+import { OpenAPIObject, ReferenceObject, SchemaObject, getSchemaType, isNullable, isReferenceObject } from './openapi-typings';
 import { Options } from './options';
 import { Property } from './property';
 
@@ -47,9 +47,23 @@ export class Model extends GenType {
       this.enumArrayName = upperCase(this.typeName).replace(/\s+/g, '_');
       this.enumArrayFileName = fileName(this.typeName + '-array');
 
-      const names = (schema as any)['x-enumNames'] as string[] || [];
-      const descriptions = (schema as any)['x-enumDescriptions'] as string[] || [];
-      const values = schema.enum || [];
+      const allNames = (schema as any)['x-enumNames'] as string[] || [];
+      const allDescriptions = (schema as any)['x-enumDescriptions'] as string[] || [];
+      // A null value cannot be a member of a TypeScript enum. The nullability is
+      // expressed in the generated type where the enum is referenced
+      // (e.g. `Enum | null`), so null values are skipped here.
+      // See https://github.com/cyclosproject/ng-openapi-gen/issues/409
+      const names: string[] = [];
+      const descriptions: string[] = [];
+      const values: any[] = [];
+      (schema.enum || []).forEach((value, i) => {
+        if (value === null) {
+          return;
+        }
+        values.push(value);
+        names.push(allNames[i]);
+        descriptions.push(allDescriptions[i]);
+      });
       this.enumValues = [];
       for (let i = 0; i < values.length; i++) {
         const enumValue = new EnumValue(typeForEnum, names[i], descriptions[i], values[i], options);
@@ -197,16 +211,114 @@ export class Model extends GenType {
   }
 
   /**
-   * Collects property names from allOf where only array of required properties is specified
+   * Collects names of required properties whose declaration is not inline in an
+   * allOf member, so they cannot be marked as required directly and must be
+   * enforced afterwards via `Required<Pick<...>>` in the template.
+   *
+   * The first case is an allOf member that only lists `required` names without
+   * declaring the properties themselves (they live in another, usually
+   * referenced, member).
+   *
+   * The second case is a name listed in the enclosing schema's own `required`
+   * array whose property is declared in a referenced member. Names declared
+   * inline (as a direct property or within an allOf member) are handled directly
+   * while building the intersection type (see gen-utils' tsType), and names that
+   * don't resolve to any declared property are left untouched. See issue #395.
    */
   private collectOrphanRequiredProperties(schema: SchemaObject): void {
+    // `Required<Pick<Model$, ...>>` is only valid when `Model$` is a plain
+    // object (or an intersection of objects). When the schema renders as a union
+    // (oneOf/anyOf) or as a nullable type (`T | null`), `keyof Model$` collapses
+    // to `never` and the Pick would not compile, so there is nothing to enforce.
+    if (isUnionSchema(schema) || isNullable(schema)) {
+      return;
+    }
+
+    // Property names whose optionality is decided directly when the intersection
+    // type is built (the enclosing schema's own properties, and the properties
+    // declared inline within an allOf member) are never orphans. Names declared
+    // by a referenced member are enforced via `Pick`, so record which names it
+    // actually contributes to the intersection type.
+    const inlineProperties = new Set<string>(Object.keys(schema.properties || {}));
+    const referencedProperties = new Set<string>();
+    const orphans = new Set<string>();
+    const visited = new Set<string>();
+    const hasRequired = !!(schema.required && schema.required.length > 0);
+
     for (const subschema of schema.allOf || []) {
       if (isReferenceObject(subschema)) {
-        continue;
-      }
-      if (subschema.required && !subschema.properties) {
-        this.orphanRequiredProperties = (this.orphanRequiredProperties || []).concat(subschema.required);
+        if (hasRequired) {
+          this.collectDeclaredPropertyNames(subschema, referencedProperties, visited);
+        }
+      } else if (subschema.properties) {
+        Object.keys(subschema.properties).forEach(name => inlineProperties.add(name));
+      } else if (subschema.required) {
+        // A member that only lists required names, without declaring the
+        // properties themselves (they live in another, usually referenced, member).
+        subschema.required.forEach(name => orphans.add(name));
       }
     }
+
+    // Names required by the enclosing schema whose property is declared in a
+    // referenced (non-inline) member. Names that don't resolve to a declared
+    // property (e.g. a required name with no matching property) are ignored.
+    for (const name of schema.required || []) {
+      if (!inlineProperties.has(name) && referencedProperties.has(name)) {
+        orphans.add(name);
+      }
+    }
+
+    if (orphans.size > 0) {
+      this.orphanRequiredProperties = [...orphans];
+    }
   }
+
+  /**
+   * Recursively collects the names of properties declared by a schema, following
+   * references and allOf members. Used to tell whether a required name actually
+   * resolves to a property that is a usable key of the generated intersection type.
+   */
+  private collectDeclaredPropertyNames(
+    schemaOrRef: SchemaObject | ReferenceObject,
+    into: Set<string>,
+    visited: Set<string>): void {
+
+    let schema: SchemaObject;
+    if (isReferenceObject(schemaOrRef)) {
+      if (visited.has(schemaOrRef.$ref)) {
+        return;
+      }
+      visited.add(schemaOrRef.$ref);
+      schema = resolveRef(this.openApi, schemaOrRef.$ref) as SchemaObject;
+    } else {
+      schema = schemaOrRef;
+    }
+
+    // Mirror gen-utils' tsType: a schema with a bare oneOf/anyOf (no sibling
+    // properties / allOf / additionalProperties) renders as a union, dropping
+    // its other keywords, and a nullable schema renders as `T | null`; in both
+    // cases the schema's own keys are not usable in a `Pick<...>` on the
+    // intersection, so they must not be reported as declared. See issue #401.
+    if (isUnionSchema(schema) || isNullable(schema)) {
+      return;
+    }
+
+    if (schema.properties) {
+      Object.keys(schema.properties).forEach(name => into.add(name));
+    }
+    for (const subschema of schema.allOf || []) {
+      this.collectDeclaredPropertyNames(subschema, into, visited);
+    }
+  }
+}
+
+/**
+ * Whether the schema renders as a bare union type, i.e. it declares oneOf or
+ * anyOf without sibling keywords. gen-utils' tsType renders such schemas as a
+ * plain union; when sibling properties / allOf / additionalProperties are
+ * present, the union is intersected with them instead. See issue #401.
+ */
+function isUnionSchema(schema: SchemaObject): boolean {
+  const hasUnion = !!((schema.oneOf && schema.oneOf.length > 0) || (schema.anyOf && schema.anyOf.length > 0));
+  return hasUnion && !hasUnionSiblings(schema);
 }
